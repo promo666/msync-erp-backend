@@ -16,6 +16,7 @@ const loginLimiter = rateLimit({
 
 router.post('/login', loginLimiter, (req, res) => {
   const { email, password } = req.body;
+console.log('LOGIN ATTEMPT:', JSON.stringify({ email, password }));
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
 
   const candidates = db.prepare(

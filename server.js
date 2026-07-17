@@ -40,6 +40,7 @@ app.use('/api/suppliers', require('./routes/suppliers'));
 app.use('/api/purchase-orders', require('./routes/purchase-orders'));
 app.use('/api/customers', require('./routes/customers'));
 app.use('/api/coupons', require('./routes/coupons'));
+app.use('/api/public', require('./routes/public'));
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 

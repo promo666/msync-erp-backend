@@ -47,8 +47,17 @@ CREATE TABLE IF NOT EXISTS shops (
   longitude REAL,
   credit_balance REAL NOT NULL DEFAULT 0,
   last_credit_at TEXT,
+  public_token TEXT,
   is_active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS shop_visits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  shop_id TEXT NOT NULL REFERENCES shops(id),
+  warehouse_id TEXT NOT NULL REFERENCES warehouses(id),
+  salesman_id TEXT NOT NULL REFERENCES users(id),
+  visited_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS shop_payments (
@@ -208,6 +217,10 @@ CREATE TABLE IF NOT EXISTS purchase_order_items (
 CREATE INDEX IF NOT EXISTS idx_users_warehouse ON users(warehouse_id);
 CREATE INDEX IF NOT EXISTS idx_shops_warehouse ON shops(warehouse_id);
 CREATE INDEX IF NOT EXISTS idx_shop_payments_shop ON shop_payments(shop_id);
+CREATE INDEX IF NOT EXISTS idx_shop_visits_shop ON shop_visits(shop_id);
+CREATE INDEX IF NOT EXISTS idx_shop_visits_warehouse ON shop_visits(warehouse_id);
+CREATE INDEX IF NOT EXISTS idx_shop_visits_salesman ON shop_visits(salesman_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shops_public_token ON shops(public_token) WHERE public_token IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_products_warehouse ON products(warehouse_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_products_barcode_unique ON products(warehouse_id, barcode) WHERE barcode IS NOT NULL AND barcode != '';
 CREATE INDEX IF NOT EXISTS idx_sales_warehouse ON sales(warehouse_id);

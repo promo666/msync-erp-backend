@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { logAudit, genId } = require('../helpers');
@@ -41,8 +42,9 @@ router.post('/', requireRole('owner', 'admin'), (req, res) => {
   if (coords.error) return res.status(400).json({ error: coords.error });
 
   const id = genId('shop');
-  db.prepare('INSERT INTO shops (id, warehouse_id, name, owner_name, phone, location, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, req.user.warehouse_id, name, owner_name || '', phone || '', location || '', coords.latitude, coords.longitude);
+  const publicToken = crypto.randomBytes(16).toString('hex');
+  db.prepare('INSERT INTO shops (id, warehouse_id, name, owner_name, phone, location, latitude, longitude, public_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, req.user.warehouse_id, name, owner_name || '', phone || '', location || '', coords.latitude, coords.longitude, publicToken);
   logAudit('SHOP_CREATED', 'shop', id, req.user.id, { name }, req.user.warehouse_id);
   res.status(201).json(db.prepare('SELECT * FROM shops WHERE id = ?').get(id));
 });
@@ -96,6 +98,63 @@ router.post('/:id/payments', requireRole('owner', 'admin'), (req, res) => {
 
   logAudit('SHOP_PAYMENT', 'shop', req.params.id, req.user.id, { amount: amt }, req.user.warehouse_id);
   res.json({ ok: true, new_balance: newBalance });
+});
+
+// Salesman (or owner/admin) confirms they physically visited this shop —
+// meant to be triggered by scanning the shop's QR code from inside the app.
+router.post('/:id/confirm-visit', (req, res) => {
+  const shop = db.prepare('SELECT * FROM shops WHERE id = ?').get(req.params.id);
+  if (!shop || shop.warehouse_id !== req.user.warehouse_id) return res.status(404).json({ error: 'Shop not found' });
+
+  db.prepare('INSERT INTO shop_visits (shop_id, warehouse_id, salesman_id) VALUES (?, ?, ?)')
+    .run(shop.id, req.user.warehouse_id, req.user.id);
+  logAudit('SHOP_VISIT_CONFIRMED', 'shop', shop.id, req.user.id, null, req.user.warehouse_id);
+  res.status(201).json({ ok: true, shop_name: shop.name });
+});
+
+// Same as above, but looks the shop up by its public QR token instead of an
+// internal id — this is what the in-app QR scanner actually calls, since it
+// only has the token (decoded straight from the printed code).
+router.post('/confirm-visit-by-token', (req, res) => {
+  const { public_token } = req.body;
+  if (!public_token) return res.status(400).json({ error: 'public_token is required' });
+
+  const shop = db.prepare('SELECT * FROM shops WHERE public_token = ? AND warehouse_id = ?').get(public_token, req.user.warehouse_id);
+  if (!shop) return res.status(404).json({ error: 'This QR code does not match a shop in your warehouse' });
+
+  db.prepare('INSERT INTO shop_visits (shop_id, warehouse_id, salesman_id) VALUES (?, ?, ?)')
+    .run(shop.id, req.user.warehouse_id, req.user.id);
+  logAudit('SHOP_VISIT_CONFIRMED', 'shop', shop.id, req.user.id, null, req.user.warehouse_id);
+  res.status(201).json({ ok: true, shop_name: shop.name, shop_id: shop.id });
+});
+
+// List visits — salesmen see only their own, owner/admin see everyone's.
+// Defaults to today; pass ?date=YYYY-MM-DD for a specific day, or ?all=1 for everything.
+router.get('/visits', (req, res) => {
+  const isManager = req.user.role === 'owner' || req.user.role === 'admin';
+  const params = [req.user.warehouse_id];
+  let where = 'v.warehouse_id = ?';
+
+  if (!isManager) {
+    where += ' AND v.salesman_id = ?';
+    params.push(req.user.id);
+  }
+  if (!req.query.all) {
+    const date = req.query.date || new Date().toISOString().slice(0, 10);
+    where += " AND date(v.visited_at) = date(?)";
+    params.push(date);
+  }
+
+  const visits = db.prepare(`
+    SELECT v.*, s.name AS shop_name, s.location AS shop_location, u.full_name AS salesman_name
+    FROM shop_visits v
+    JOIN shops s ON s.id = v.shop_id
+    JOIN users u ON u.id = v.salesman_id
+    WHERE ${where}
+    ORDER BY v.visited_at DESC
+  `).all(...params);
+
+  res.json(visits);
 });
 
 module.exports = router;

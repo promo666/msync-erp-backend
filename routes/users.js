@@ -1,6 +1,5 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const crypto = require('crypto');
 const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { logAudit, genId } = require('../helpers');
@@ -18,9 +17,12 @@ router.get('/', requireRole('owner', 'admin'), (req, res) => {
 });
 
 router.post('/', requireRole('owner'), (req, res) => {
-  const { email, full_name, role } = req.body;
-  if (!email || !full_name || !role) return res.status(400).json({ error: 'email, full_name and role are required' });
+  const { email, full_name, role, password } = req.body;
+  if (!email || !full_name || !role || !password) {
+    return res.status(400).json({ error: 'email, full_name, role and password are all required' });
+  }
   if (!['owner', 'admin', 'salesman'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
   const normalizedEmail = email.toLowerCase().trim();
   // Email only needs to be unique WITHIN this warehouse — the same email can
@@ -29,21 +31,17 @@ router.post('/', requireRole('owner'), (req, res) => {
   const existing = db.prepare('SELECT id FROM users WHERE warehouse_id = ? AND email = ?').get(req.user.warehouse_id, normalizedEmail);
   if (existing) return res.status(409).json({ error: 'A user with this email already exists in your warehouse' });
 
-  // Generate a strong temporary password rather than trusting client-supplied ones
-  const tempPassword = crypto.randomBytes(9).toString('base64url');
-  const hash = bcrypt.hashSync(tempPassword, 12);
+  const hash = bcrypt.hashSync(password, 12);
   const id = genId('user');
 
   db.prepare(
     `INSERT INTO users (id, warehouse_id, email, password_hash, full_name, role, is_active, must_change_password)
-     VALUES (?, ?, ?, ?, ?, ?, 1, 1)`
+     VALUES (?, ?, ?, ?, ?, ?, 1, 0)`
   ).run(id, req.user.warehouse_id, normalizedEmail, hash, full_name, role);
 
   logAudit('USER_CREATED', 'user', id, req.user.id, { email: normalizedEmail, role }, req.user.warehouse_id);
 
-  // Temp password is returned ONCE so the admin can share it with the new user securely (e.g. verbally/Slack DM)
-  // It is never stored in plaintext and never retrievable again.
-  res.status(201).json({ id, email: normalizedEmail, full_name, role, temp_password: tempPassword });
+  res.status(201).json({ id, email: normalizedEmail, full_name, role });
 });
 
 function getOwnedUser(req, res) {
@@ -67,14 +65,15 @@ router.patch('/:id/status', requireRole('owner'), (req, res) => {
 });
 
 router.post('/:id/reset-password', requireRole('owner'), (req, res) => {
+  const { password } = req.body;
   const user = getOwnedUser(req, res);
   if (!user) return;
+  if (!password || password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
-  const tempPassword = crypto.randomBytes(9).toString('base64url');
-  const hash = bcrypt.hashSync(tempPassword, 12);
-  db.prepare('UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?').run(hash, req.params.id);
+  const hash = bcrypt.hashSync(password, 12);
+  db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?').run(hash, req.params.id);
   logAudit('PASSWORD_RESET_BY_OWNER', 'user', req.params.id, req.user.id, null, req.user.warehouse_id);
-  res.json({ temp_password: tempPassword });
+  res.json({ ok: true });
 });
 
 module.exports = router;

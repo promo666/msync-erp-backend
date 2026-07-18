@@ -188,6 +188,9 @@ CREATE TABLE IF NOT EXISTS suppliers (
   phone TEXT,
   email TEXT,
   address TEXT,
+  login_email TEXT,
+  password_hash TEXT,
+  login_enabled INTEGER NOT NULL DEFAULT 0,
   is_active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -203,6 +206,12 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   created_by TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   received_at TEXT,
+  shipment_status TEXT NOT NULL DEFAULT 'awaiting',
+  driver_name TEXT,
+  driver_phone TEXT,
+  truck_number TEXT,
+  loaded_at TEXT,
+  shipment_notes TEXT,
   UNIQUE(warehouse_id, order_number)
 );
 
@@ -233,6 +242,7 @@ CREATE INDEX IF NOT EXISTS idx_coupons_warehouse ON coupons(warehouse_id);
 CREATE INDEX IF NOT EXISTS idx_customers_warehouse ON customers(warehouse_id);
 CREATE INDEX IF NOT EXISTS idx_customer_payments_customer ON customer_payments(customer_id);
 CREATE INDEX IF NOT EXISTS idx_suppliers_warehouse ON suppliers(warehouse_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_suppliers_login_email ON suppliers(login_email) WHERE login_email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_po_warehouse ON purchase_orders(warehouse_id);
 CREATE INDEX IF NOT EXISTS idx_po_items_po ON purchase_order_items(po_id);
 `);

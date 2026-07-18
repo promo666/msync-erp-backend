@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const db = require('../db');
 const { requireSuperAdmin } = require('../middleware/superAuth');
+const { genId } = require('../helpers');
 
 const router = express.Router();
 
@@ -201,6 +202,55 @@ router.patch('/warehouses/:id/status', (req, res) => {
   const warehouse = db.prepare('SELECT * FROM warehouses WHERE id = ?').get(req.params.id);
   if (!warehouse) return res.status(404).json({ error: 'Warehouse not found' });
   db.prepare('UPDATE warehouses SET is_active = ? WHERE id = ?').run(is_active ? 1 : 0, req.params.id);
+  res.json({ ok: true });
+});
+
+// ---------- Manage Super Admin accounts (self-service, no console needed) ----------
+// Only an already-logged-in Super Admin can reach these — never a regular
+// warehouse owner, no matter what role they hold in their own warehouse.
+router.get('/super-admins', (req, res) => {
+  const admins = db.prepare('SELECT id, email, full_name, is_active, created_at FROM super_admins ORDER BY created_at ASC').all();
+  res.json(admins);
+});
+
+router.post('/super-admins', (req, res) => {
+  const { email, full_name, password } = req.body;
+  if (!email || !full_name || !password) return res.status(400).json({ error: 'email, full_name and password are required' });
+  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+
+  const normalizedEmail = String(email).toLowerCase().trim();
+  const existing = db.prepare('SELECT id FROM super_admins WHERE email = ?').get(normalizedEmail);
+  if (existing) return res.status(409).json({ error: 'A super admin with this email already exists' });
+
+  const id = genId('superadmin');
+  const hash = bcrypt.hashSync(password, 12);
+  db.prepare('INSERT INTO super_admins (id, email, password_hash, full_name, is_active) VALUES (?, ?, ?, ?, 1)')
+    .run(id, normalizedEmail, hash, full_name);
+
+  res.status(201).json({ id, email: normalizedEmail, full_name });
+});
+
+router.patch('/super-admins/:id/status', (req, res) => {
+  const { is_active } = req.body;
+  if (req.params.id === req.superAdmin.id && !is_active) {
+    return res.status(400).json({ error: "You can't deactivate your own account" });
+  }
+  const admin = db.prepare('SELECT id FROM super_admins WHERE id = ?').get(req.params.id);
+  if (!admin) return res.status(404).json({ error: 'Super admin not found' });
+
+  db.prepare('UPDATE super_admins SET is_active = ? WHERE id = ?').run(is_active ? 1 : 0, req.params.id);
+  res.json({ ok: true });
+});
+
+router.post('/super-admins/:id/reset-password', (req, res) => {
+  const { password } = req.body;
+  if (!password || password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+
+  const admin = db.prepare('SELECT id FROM super_admins WHERE id = ?').get(req.params.id);
+  if (!admin) return res.status(404).json({ error: 'Super admin not found' });
+
+  const hash = bcrypt.hashSync(password, 12);
+  db.prepare('UPDATE super_admins SET password_hash = ? WHERE id = ?').run(hash, req.params.id);
   res.json({ ok: true });
 });
 

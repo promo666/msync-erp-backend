@@ -21,7 +21,7 @@ router.post('/', requireRole('owner'), (req, res) => {
   if (!email || !full_name || !role || !password) {
     return res.status(400).json({ error: 'email, full_name, role and password are all required' });
   }
-  if (!['owner', 'admin', 'salesman'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+  if (!['owner', 'admin', 'salesman', 'sales_supervisor'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
   const normalizedEmail = email.toLowerCase().trim();

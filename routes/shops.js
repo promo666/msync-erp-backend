@@ -31,10 +31,16 @@ function parseCoordinates({ coordinates, latitude, longitude }) {
 }
 
 router.get('/', (req, res) => {
-  res.json(db.prepare('SELECT * FROM shops WHERE warehouse_id = ? ORDER BY name ASC').all(req.user.warehouse_id));
+  const isManager = req.user.role === 'owner' || req.user.role === 'admin';
+  const shops = isManager
+    ? db.prepare('SELECT * FROM shops WHERE warehouse_id = ? ORDER BY name ASC').all(req.user.warehouse_id)
+    : db.prepare(
+        `SELECT * FROM shops WHERE warehouse_id = ? AND (created_by IS NULL OR created_by = ?) ORDER BY name ASC`
+      ).all(req.user.warehouse_id, req.user.id);
+  res.json(shops);
 });
 
-router.post('/', requireRole('owner', 'admin'), (req, res) => {
+router.post('/', (req, res) => {
   const { name, owner_name, phone, location } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
 
@@ -43,15 +49,19 @@ router.post('/', requireRole('owner', 'admin'), (req, res) => {
 
   const id = genId('shop');
   const publicToken = crypto.randomBytes(16).toString('hex');
-  db.prepare('INSERT INTO shops (id, warehouse_id, name, owner_name, phone, location, latitude, longitude, public_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, req.user.warehouse_id, name, owner_name || '', phone || '', location || '', coords.latitude, coords.longitude, publicToken);
+  db.prepare('INSERT INTO shops (id, warehouse_id, name, owner_name, phone, location, latitude, longitude, public_token, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, req.user.warehouse_id, name, owner_name || '', phone || '', location || '', coords.latitude, coords.longitude, publicToken, req.user.id);
   logAudit('SHOP_CREATED', 'shop', id, req.user.id, { name }, req.user.warehouse_id);
   res.status(201).json(db.prepare('SELECT * FROM shops WHERE id = ?').get(id));
 });
 
-router.put('/:id', requireRole('owner', 'admin'), (req, res) => {
+router.put('/:id', (req, res) => {
   const shop = db.prepare('SELECT * FROM shops WHERE id = ?').get(req.params.id);
   if (!shop || shop.warehouse_id !== req.user.warehouse_id) return res.status(404).json({ error: 'Shop not found' });
+
+  const isManager = req.user.role === 'owner' || req.user.role === 'admin';
+  const isOwnShop = shop.created_by === req.user.id;
+  if (!isManager && !isOwnShop) return res.status(403).json({ error: 'You can only edit shops you added yourself' });
   const { name, owner_name, phone, location, is_active } = req.body;
 
   const hasCoordInput = req.body.coordinates != null || req.body.latitude != null || req.body.longitude != null;

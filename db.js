@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS shops (
   credit_balance REAL NOT NULL DEFAULT 0,
   last_credit_at TEXT,
   public_token TEXT,
+  created_by TEXT REFERENCES users(id),
   is_active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

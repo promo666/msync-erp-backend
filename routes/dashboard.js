@@ -41,19 +41,23 @@ router.get('/summary', (req, res) => {
   });
 });
 
-// Target vs achieved (owner/admin only, but route itself is open — data is safe to view for all managers)
+// Target vs achieved — open to everyone, but salesmen only see progress
+// toward THEIR OWN sales, not the whole team's, since "achieved" should
+// reflect what that individual actually sold.
 router.get('/targets', (req, res) => {
-  if (req.user.role === 'salesman') return res.status(403).json({ error: 'Not permitted' });
+  const isManager = req.user.role === 'owner' || req.user.role === 'admin';
 
   const products = db.prepare('SELECT * FROM products WHERE is_active = 1').all();
   const achievedStmt = db.prepare(
     `SELECT COALESCE(SUM(si.quantity),0) AS qty
      FROM sale_items si JOIN sales s ON s.id = si.sale_id
-     WHERE si.product_id = ? AND s.status = 'completed' AND strftime('%Y-%m', s.created_at) = strftime('%Y-%m','now')`
+     WHERE si.product_id = ? AND s.status = 'completed' AND strftime('%Y-%m', s.created_at) = strftime('%Y-%m','now')
+     ${isManager ? '' : 'AND s.salesman_id = ?'}`
   );
 
   const result = products.map(p => {
-    const achieved = achievedStmt.get(p.id).qty;
+    const params = isManager ? [p.id] : [p.id, req.user.id];
+    const achieved = achievedStmt.get(...params).qty;
     return {
       id: p.id,
       name: p.name,

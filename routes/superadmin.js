@@ -46,11 +46,12 @@ router.get('/warehouses', (req, res) => {
       (SELECT COALESCE(SUM(total_amount), 0) FROM sales WHERE warehouse_id = ? AND status = 'completed') AS total_sales,
       (SELECT COUNT(*) FROM sales WHERE warehouse_id = ? AND status = 'completed') AS total_sale_count,
       (SELECT COALESCE(SUM(credit_balance), 0) FROM shops WHERE warehouse_id = ?) AS credit_outstanding,
-      (SELECT COUNT(*) FROM shops WHERE warehouse_id = ? AND credit_balance > 0) AS shops_owing
+      (SELECT COUNT(*) FROM shops WHERE warehouse_id = ? AND credit_balance > 0) AS shops_owing,
+      (SELECT COUNT(*) FROM shop_visits WHERE warehouse_id = ?) AS visit_count
   `);
 
   const result = warehouses.map(w => {
-    const stats = statsStmt.get(w.id, w.id, w.id, w.id, w.id, w.id, w.id);
+    const stats = statsStmt.get(w.id, w.id, w.id, w.id, w.id, w.id, w.id, w.id);
     return { ...w, stats };
   });
 
@@ -73,6 +74,10 @@ router.get('/reports/overview', (req, res) => {
   combined.total_credit_outstanding = creditCombined.total_credit_outstanding;
   combined.shops_owing = creditCombined.shops_owing;
 
+  // "Receipts" = total completed sales (each sale produces one receipt/invoice)
+  combined.total_receipts = combined.total_sale_count;
+  combined.total_visits = db.prepare(`SELECT COUNT(*) AS c FROM shop_visits`).get().c;
+
   const ranking = db.prepare(`
     SELECT
       w.id AS warehouse_id,
@@ -91,6 +96,15 @@ router.get('/reports/overview', (req, res) => {
   `).all();
   const creditMap = Object.fromEntries(creditByWarehouse.map(c => [c.warehouse_id, c.credit_outstanding]));
   ranking.forEach(r => { r.credit_outstanding = creditMap[r.warehouse_id] || 0; });
+
+  const visitsByWarehouse = db.prepare(`
+    SELECT warehouse_id, COUNT(*) AS visit_count FROM shop_visits GROUP BY warehouse_id
+  `).all();
+  const visitsMap = Object.fromEntries(visitsByWarehouse.map(v => [v.warehouse_id, v.visit_count]));
+  ranking.forEach(r => {
+    r.visit_count = visitsMap[r.warehouse_id] || 0;
+    r.receipt_count = r.sale_count; // "receipts" = completed sales for that warehouse
+  });
 
   res.json({ combined, ranking });
 });
@@ -111,6 +125,8 @@ router.get('/warehouses/:id/dashboard', (req, res) => {
     SELECT COALESCE(SUM(total_amount),0) AS total_sales, COUNT(*) AS sale_count
     FROM sales WHERE warehouse_id = ? AND status = 'completed'
   `).get(whId);
+  totals.receipt_count = totals.sale_count;
+  totals.visit_count = db.prepare(`SELECT COUNT(*) AS c FROM shop_visits WHERE warehouse_id = ?`).get(whId).c;
 
   const lowStock = db.prepare(`
     SELECT id, sku, name, current_stock, low_stock_threshold
@@ -151,6 +167,32 @@ router.get('/warehouses/:id/dashboard', (req, res) => {
   }, { totalOwed: 0, shopsOwing: 0, overdueCount: 0, overdueAmount: 0 });
 
   res.json({ warehouse, totals, lowStock, topProducts, recentSales, shopsOwing, creditSummary });
+});
+
+// ---------- Full product/stock list for a single warehouse ----------
+router.get('/warehouses/:id/products', (req, res) => {
+  const warehouse = db.prepare('SELECT * FROM warehouses WHERE id = ?').get(req.params.id);
+  if (!warehouse) return res.status(404).json({ error: 'Warehouse not found' });
+
+  const products = db.prepare(
+    `SELECT id, sku, barcode, name, category, unit_price, cost_price, current_stock, low_stock_threshold, is_active
+     FROM products WHERE warehouse_id = ? ORDER BY name ASC`
+  ).all(req.params.id);
+
+  res.json(products);
+});
+
+// ---------- Full product/stock list for a single warehouse (searchable) ----------
+router.get('/warehouses/:id/products', (req, res) => {
+  const warehouse = db.prepare('SELECT * FROM warehouses WHERE id = ?').get(req.params.id);
+  if (!warehouse) return res.status(404).json({ error: 'Warehouse not found' });
+
+  const products = db.prepare(
+    `SELECT id, sku, barcode, name, category, unit_price, cost_price, current_stock, low_stock_threshold, is_active
+     FROM products WHERE warehouse_id = ? ORDER BY name ASC`
+  ).all(req.params.id);
+
+  res.json({ warehouse, products });
 });
 
 // ---------- Activate / deactivate an entire warehouse ----------

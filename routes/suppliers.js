@@ -12,12 +12,26 @@ router.get('/', requireRole('owner', 'admin'), (req, res) => {
 });
 
 router.post('/', requireRole('owner', 'admin'), (req, res) => {
-  const { name, contact_name, phone, email, address } = req.body;
+  const { name, contact_name, phone, email, address, login_email, password } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
+
+  // Login credentials are optional at creation time — if either is given, both are required.
+  let normalizedLoginEmail = null;
+  let passwordHash = null;
+  if (login_email || password) {
+    if (!login_email || !password) return res.status(400).json({ error: 'login_email and password must both be provided together' });
+    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    normalizedLoginEmail = login_email.toLowerCase().trim();
+    const existing = db.prepare('SELECT id FROM suppliers WHERE login_email = ?').get(normalizedLoginEmail);
+    if (existing) return res.status(409).json({ error: 'This email is already used for another supplier login' });
+    passwordHash = bcrypt.hashSync(password, 12);
+  }
+
   const id = genId('supplier');
   db.prepare(
-    `INSERT INTO suppliers (id, warehouse_id, name, contact_name, phone, email, address) VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, req.user.warehouse_id, name, contact_name || '', phone || '', email || '', address || '');
+    `INSERT INTO suppliers (id, warehouse_id, name, contact_name, phone, email, address, login_email, password_hash, login_enabled)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, req.user.warehouse_id, name, contact_name || '', phone || '', email || '', address || '', normalizedLoginEmail, passwordHash, normalizedLoginEmail ? 1 : 0);
   logAudit('SUPPLIER_CREATED', 'supplier', id, req.user.id, { name }, req.user.warehouse_id);
   res.status(201).json(db.prepare('SELECT * FROM suppliers WHERE id = ?').get(id));
 });

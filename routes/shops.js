@@ -31,7 +31,7 @@ function parseCoordinates({ coordinates, latitude, longitude }) {
 }
 
 router.get('/', (req, res) => {
-  const isManager = req.user.role === 'owner' || req.user.role === 'admin';
+  const isManager = req.user.role === 'owner' || req.user.role === 'admin' || req.user.role === 'sales_supervisor';
   const shops = isManager
     ? db.prepare('SELECT * FROM shops WHERE warehouse_id = ? ORDER BY name ASC').all(req.user.warehouse_id)
     : db.prepare(
@@ -59,7 +59,7 @@ router.put('/:id', (req, res) => {
   const shop = db.prepare('SELECT * FROM shops WHERE id = ?').get(req.params.id);
   if (!shop || shop.warehouse_id !== req.user.warehouse_id) return res.status(404).json({ error: 'Shop not found' });
 
-  const isManager = req.user.role === 'owner' || req.user.role === 'admin';
+  const isManager = req.user.role === 'owner' || req.user.role === 'admin' || req.user.role === 'sales_supervisor';
   const isOwnShop = shop.created_by === req.user.id;
   if (!isManager && !isOwnShop) return res.status(403).json({ error: 'You can only edit shops you added yourself' });
   const { name, owner_name, phone, location, is_active } = req.body;
@@ -90,7 +90,7 @@ router.put('/:id', (req, res) => {
 });
 
 // Record a payment against a shop's outstanding credit balance
-router.post('/:id/payments', requireRole('owner', 'admin'), (req, res) => {
+router.post('/:id/payments', requireRole('owner', 'admin', 'sales_supervisor'), (req, res) => {
   const { amount, note } = req.body;
   const shop = db.prepare('SELECT * FROM shops WHERE id = ?').get(req.params.id);
   if (!shop || shop.warehouse_id !== req.user.warehouse_id) return res.status(404).json({ error: 'Shop not found' });
@@ -141,7 +141,7 @@ router.post('/confirm-visit-by-token', (req, res) => {
 // List visits — salesmen see only their own, owner/admin see everyone's.
 // Defaults to today; pass ?date=YYYY-MM-DD for a specific day, or ?all=1 for everything.
 router.get('/visits', (req, res) => {
-  const isManager = req.user.role === 'owner' || req.user.role === 'admin';
+  const isManager = req.user.role === 'owner' || req.user.role === 'admin' || req.user.role === 'sales_supervisor';
   const params = [req.user.warehouse_id];
   let where = 'v.warehouse_id = ?';
 
@@ -165,6 +165,27 @@ router.get('/visits', (req, res) => {
   `).all(...params);
 
   res.json(visits);
+});
+
+// Shops whose credit will hit the 6-day overdue mark TOMORROW — this is the
+// data a future notification system (WhatsApp/email) would send out. Right
+// now it's just an API endpoint; nothing is actually sent yet.
+// Sales Supervisor / owner / admin see every such shop in the warehouse;
+// a salesman sees only shops they personally added.
+router.get('/due-tomorrow', (req, res) => {
+  const isManager = req.user.role === 'owner' || req.user.role === 'admin' || req.user.role === 'sales_supervisor';
+
+  const shops = isManager
+    ? db.prepare(`SELECT * FROM shops WHERE warehouse_id = ? AND credit_balance > 0`).all(req.user.warehouse_id)
+    : db.prepare(`SELECT * FROM shops WHERE warehouse_id = ? AND credit_balance > 0 AND created_by = ?`).all(req.user.warehouse_id, req.user.id);
+
+  const dueTomorrow = shops.filter(s => {
+    if (!s.last_credit_at) return false;
+    const days = Math.floor((Date.now() - new Date(s.last_credit_at).getTime()) / 86400000);
+    return days === 5; // day 6 (overdue) lands tomorrow
+  });
+
+  res.json(dueTomorrow);
 });
 
 module.exports = router;

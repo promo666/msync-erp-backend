@@ -8,7 +8,7 @@ router.use(requireAuth);
 
 // Salesmen only see their own sales; owner/admin see everyone's IN THEIR OWN WAREHOUSE
 router.get('/', (req, res) => {
-  const isManager = req.user.role === 'owner' || req.user.role === 'admin';
+  const isManager = req.user.role === 'owner' || req.user.role === 'admin' || req.user.role === 'sales_supervisor';
   const baseSelect = `SELECT s.*, u.full_name AS salesman_name, sh.name AS shop_name, sh.location AS shop_location,
                               sh.latitude AS shop_latitude, sh.longitude AS shop_longitude,
                               c.name AS linked_customer_name

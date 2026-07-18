@@ -4,8 +4,14 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 router.use(requireAuth);
-// Reports show profit/cost data — restrict to owner/admin, salesmen shouldn't see margins.
-router.use(requireRole('owner', 'admin'));
+// Reports show profit/cost data — restrict to roles that should see it.
+// Sales Supervisors get full report access EXCEPT cost/profit numbers,
+// stripped out below in /summary and blocked entirely in /profit-margins.
+router.use(requireRole('owner', 'admin', 'sales_supervisor'));
+
+function canSeeCostNumbers(req) {
+  return req.user.role !== 'sales_supervisor';
+}
 
 // All endpoints accept optional ?from=YYYY-MM-DD&to=YYYY-MM-DD query params.
 // If omitted, they default to "all time" for this warehouse.
@@ -19,6 +25,7 @@ function dateRange(req) {
 router.get('/summary', (req, res) => {
   const { from, to } = dateRange(req);
   const warehouseId = req.user.warehouse_id;
+  const showCost = canSeeCostNumbers(req);
 
   const totals = db.prepare(`
     SELECT
@@ -30,6 +37,11 @@ router.get('/summary', (req, res) => {
     JOIN products p ON p.id = si.product_id
     WHERE s.warehouse_id = ? AND s.status = 'completed' AND s.created_at BETWEEN ? AND ?
   `).get(warehouseId, from, to);
+
+  if (!showCost) {
+    // Sales Supervisor: revenue and sale count only, no cost/profit/margin numbers at all.
+    return res.json({ total_revenue: totals.total_revenue, total_sales: totals.total_sales });
+  }
 
   const profit = totals.total_revenue - totals.total_cost;
   const marginPct = totals.total_revenue > 0 ? (profit / totals.total_revenue) * 100 : 0;
@@ -79,6 +91,8 @@ router.get('/best-sellers', (req, res) => {
 
 // ---------- Profit margin per product ----------
 router.get('/profit-margins', (req, res) => {
+  if (!canSeeCostNumbers(req)) return res.status(403).json({ error: 'Not permitted to view cost/profit data' });
+
   const { from, to } = dateRange(req);
 
   const rows = db.prepare(`

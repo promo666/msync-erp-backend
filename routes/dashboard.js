@@ -6,7 +6,7 @@ const router = express.Router();
 router.use(requireAuth);
 
 router.get('/summary', (req, res) => {
-  const isManager = req.user.role === 'owner' || req.user.role === 'admin';
+  const isManager = req.user.role === 'owner' || req.user.role === 'admin' || req.user.role === 'sales_supervisor';
   const params = isManager ? [] : [req.user.id];
 
   const totalSales = db.prepare(
@@ -45,7 +45,7 @@ router.get('/summary', (req, res) => {
 // toward THEIR OWN sales, not the whole team's, since "achieved" should
 // reflect what that individual actually sold.
 router.get('/targets', (req, res) => {
-  const isManager = req.user.role === 'owner' || req.user.role === 'admin';
+  const isManager = req.user.role === 'owner' || req.user.role === 'admin' || req.user.role === 'sales_supervisor';
 
   const products = db.prepare('SELECT * FROM products WHERE is_active = 1').all();
   const achievedStmt = db.prepare(

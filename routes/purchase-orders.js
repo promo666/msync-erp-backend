@@ -5,7 +5,7 @@ const { logAudit, logInventory, genId } = require('../helpers');
 
 const router = express.Router();
 router.use(requireAuth);
-router.use(requireRole('owner', 'admin'));
+router.use(requireRole('owner', 'admin', 'sales_supervisor'));
 
 router.get('/', (req, res) => {
   const orders = db.prepare(
